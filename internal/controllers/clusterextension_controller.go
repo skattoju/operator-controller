@@ -62,12 +62,16 @@ const (
 	ClusterExtensionCleanupContentManagerCacheFinalizer = "olm.operatorframework.io/cleanup-contentmanager-cache"
 )
 
+type Engine struct {
+	rukpaksource.Unpacker
+	Applier
+}
+
 // ClusterExtensionReconciler reconciles a ClusterExtension object
 type ClusterExtensionReconciler struct {
 	client.Client
 	Resolver              resolve.Resolver
-	Unpacker              rukpaksource.Unpacker
-	Applier               Applier
+	Engine                *Engine
 	Manager               contentmanager.Manager
 	controller            crcontroller.Controller
 	cache                 cache.Cache
@@ -247,7 +251,7 @@ func (r *ClusterExtensionReconciler) reconcile(ctx context.Context, ext *ocv1alp
 		},
 	}
 	l.Info("unpacking resolved bundle")
-	unpackResult, err := r.Unpacker.Unpack(ctx, bundleSource)
+	unpackResult, err := r.Engine.Unpack(ctx, bundleSource)
 	if err != nil {
 		// Wrap the error passed to this with the resolution information until we have successfully
 		// installed since we intend for the progressing condition to replace the resolved condition
@@ -281,7 +285,7 @@ func (r *ClusterExtensionReconciler) reconcile(ctx context.Context, ext *ocv1alp
 	// to ensure exponential backoff can occur:
 	//   - Permission errors (it is not possible to watch changes to permissions.
 	//     The only way to eventually recover from permission errors is to keep retrying).
-	managedObjs, _, err := r.Applier.Apply(ctx, unpackResult.Bundle, ext, objLbls, storeLbls)
+	managedObjs, _, err := r.Engine.Apply(ctx, unpackResult.Bundle, ext, objLbls, storeLbls)
 	if err != nil {
 		setStatusProgressing(ext, wrapErrorWithResolutionInfo(resolvedBundleMetadata, err))
 		// If bundle is not already installed, set Installed status condition to False

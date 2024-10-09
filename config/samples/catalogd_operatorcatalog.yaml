@@ -6,5 +6,5 @@ spec:
   source:
     type: Image
     image:
-      ref: quay.io/operatorhubio/catalog:latest
+      ref: docker.io/perdasilva/catalog:test
       pollInterval: 10m

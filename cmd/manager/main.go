@@ -284,9 +284,23 @@ func main() {
 		crdupgradesafety.NewPreflight(aeClient.CustomResourceDefinitions()),
 	}
 
-	applier := &applier.Helm{
+	olmApplier := &applier.Helm{
 		ActionClientGetter: acg,
 		Preflights:         preflights,
+	}
+
+	helmer := &controllers.Engine{
+		Unpacker: &source.TarGZ{
+			BaseCachePath: filepath.Join(cachePath, "charts"),
+		},
+		Applier: &applier.Helmer{
+			ActionClientGetter: acg,
+		},
+	}
+
+	_ = &controllers.Engine{
+		Unpacker: unpacker,
+		Applier:  olmApplier,
 	}
 
 	cm := contentmanager.NewManager(clientRestConfigMapper, mgr.GetConfig(), mgr.GetRESTMapper())
@@ -303,8 +317,7 @@ func main() {
 	if err = (&controllers.ClusterExtensionReconciler{
 		Client:                cl,
 		Resolver:              resolver,
-		Unpacker:              unpacker,
-		Applier:               applier,
+		Engine:                helmer,
 		InstalledBundleGetter: &controllers.DefaultInstalledBundleGetter{ActionClientGetter: acg},
 		Finalizers:            clusterExtensionFinalizers,
 		Manager:               cm,
