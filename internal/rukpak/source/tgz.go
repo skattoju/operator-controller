@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"strings"
 
 	"github.com/containers/image/v5/pkg/blobinfocache/none"
 	"github.com/containers/image/v5/types"
@@ -29,6 +31,13 @@ func (i *TarGZ) Unpack(ctx context.Context, bundle *BundleSource) (*Result, erro
 	if bundle.Image == nil {
 		return nil, reconcile.TerminalError(fmt.Errorf("error parsing bundle, bundle %s has a nil image source", bundle.Name))
 	}
+
+	// Parse the URL
+	parsedURL, err := url.Parse(bundle.Image.Ref)
+	if err != nil {
+		return nil, reconcile.TerminalError(fmt.Errorf("error downloading bundle '%s': %v", bundle.Name, err))
+	}
+	fileName := path.Base(parsedURL.Path)
 
 	// Download the .tgz file
 	resp, err := http.Get(bundle.Image.Ref)
@@ -48,22 +57,15 @@ func (i *TarGZ) Unpack(ctx context.Context, bundle *BundleSource) (*Result, erro
 	}
 	defer gzReader.Close()
 
-	unpackDir := path.Join(i.BaseCachePath, bundle.Name)
+	unpackDir := path.Join(i.BaseCachePath, bundle.Name, fileName)
 	err = os.MkdirAll(unpackDir, 0700)
 	if err != nil {
 		return nil, fmt.Errorf("error creating temporary directory: %w", err)
 	}
-	defer func() {
-		if err := os.RemoveAll(unpackDir); err != nil {
-			l.Error(err, "error removing temporary OCI layout directory")
-		}
-	}()
 
 	// Open a tar reader
 	tarReader := tar.NewReader(gzReader)
-
-	_hack := ""
-
+	topLevelDir := ""
 	// Extract tar contents
 	for {
 		header, err := tarReader.Next()
@@ -74,8 +76,21 @@ func (i *TarGZ) Unpack(ctx context.Context, bundle *BundleSource) (*Result, erro
 			return nil, reconcile.TerminalError(fmt.Errorf("error unpaking bundle '%s': %v", bundle.Name, err))
 		}
 
+		// On the first entry, capture the top-level directory
+		if topLevelDir == "" {
+			topLevelDir = strings.Split(header.Name, "/")[0]
+		}
+
+		// Strip the top-level directory from the path
+		relativePath := strings.TrimPrefix(header.Name, topLevelDir+"/")
+
+		if relativePath == "" {
+			// Skip the top-level directory itself
+			continue
+		}
+
 		// Construct the target file path
-		targetPath := filepath.Join(unpackDir, header.Name)
+		targetPath := filepath.Join(unpackDir, relativePath)
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -87,9 +102,6 @@ func (i *TarGZ) Unpack(ctx context.Context, bundle *BundleSource) (*Result, erro
 			// Ensure the directory for the file exists
 			if err := os.MkdirAll(filepath.Dir(targetPath), os.FileMode(0700)); err != nil {
 				return nil, reconcile.TerminalError(fmt.Errorf("error unpacking bundle '%s': %v", bundle.Name, err))
-			}
-			if _hack == "" {
-				_hack = filepath.Join(unpackDir, filepath.Dir(targetPath))
 			}
 
 			// Create a file
@@ -108,7 +120,7 @@ func (i *TarGZ) Unpack(ctx context.Context, bundle *BundleSource) (*Result, erro
 		}
 	}
 
-	return successHelmUnpackResult(bundle.Name, _hack, bundle.Image.Ref), nil
+	return successHelmUnpackResult(bundle.Name, unpackDir, bundle.Image.Ref), nil
 }
 
 func successHelmUnpackResult(bundleName, unpackPath string, chartgz string) *Result {

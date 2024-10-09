@@ -6,5 +6,5 @@ spec:
   source:
     type: Image
     image:
-      ref: docker.io/perdasilva/catalog:test
+      ref: docker.io/perdasilva/catalog:2
       pollInterval: 10m

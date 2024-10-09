@@ -7,7 +7,6 @@ import (
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"io"
 	"io/fs"
-	"path/filepath"
 	"strings"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -28,11 +27,11 @@ type Helmer struct {
 	ActionClientGetter helmclient.ActionClientGetter
 }
 
-func loadChartFromFS(fsys fs.FS, chartDir string) (*chart.Chart, error) {
+func loadChartFromFS(fsys fs.FS) (*chart.Chart, error) {
 	var files []*loader.BufferedFile
 
 	// Walk through the file system and gather the chart files
-	err := fs.WalkDir(fsys, chartDir, func(path string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -56,11 +55,7 @@ func loadChartFromFS(fsys fs.FS, chartDir string) (*chart.Chart, error) {
 		}
 
 		// Create a BufferedFile with the content
-		relativePath, err := filepath.Rel(chartDir, path)
-		if err != nil {
-			return err
-		}
-		files = append(files, &loader.BufferedFile{Name: relativePath, Data: content})
+		files = append(files, &loader.BufferedFile{Name: path, Data: content})
 
 		return nil
 	})
@@ -79,7 +74,7 @@ func loadChartFromFS(fsys fs.FS, chartDir string) (*chart.Chart, error) {
 }
 
 func (h *Helmer) Apply(ctx context.Context, contentFS fs.FS, ext *ocv1alpha1.ClusterExtension, objectLabels map[string]string, storageLabels map[string]string) ([]client.Object, string, error) {
-	chrt, err := loadChartFromFS(contentFS, ".")
+	chrt, err := loadChartFromFS(contentFS)
 	if err != nil {
 		return nil, "", err
 	}

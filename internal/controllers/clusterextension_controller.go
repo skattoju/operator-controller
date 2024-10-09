@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -67,11 +68,35 @@ type Engine struct {
 	Applier
 }
 
+type Enginator struct {
+	Router        map[string]*Engine
+	DefaultEngine *Engine
+}
+
+func (e *Enginator) GetEngine(bundle *declcfg.Bundle) (*Engine, error) {
+	contentType := ""
+	for _, property := range bundle.Properties {
+		if property.Type == "olm.content-type" {
+			if err := json.Unmarshal(property.Value, &contentType); err != nil {
+				return nil, fmt.Errorf("error unmarshalling package property: %w", err)
+			}
+			break
+		}
+	}
+	if contentType == "" {
+		return e.DefaultEngine, nil
+	}
+	if _, ok := e.Router[contentType]; !ok {
+		return nil, fmt.Errorf("unknown content type: %s", contentType)
+	}
+	return e.Router[contentType], nil
+}
+
 // ClusterExtensionReconciler reconciles a ClusterExtension object
 type ClusterExtensionReconciler struct {
 	client.Client
 	Resolver              resolve.Resolver
-	Engine                *Engine
+	Enginator             *Enginator
 	Manager               contentmanager.Manager
 	controller            crcontroller.Controller
 	cache                 cache.Cache
@@ -250,8 +275,18 @@ func (r *ClusterExtensionReconciler) reconcile(ctx context.Context, ext *ocv1alp
 			Ref: resolvedBundle.Image,
 		},
 	}
+
+	engine, err := r.Enginator.GetEngine(resolvedBundle)
+	if err != nil {
+		// Wrap the error passed to this with the resolution information until we have successfully
+		// installed since we intend for the progressing condition to replace the resolved condition
+		// and will be removing the .status.resolution field from the ClusterExtension status API
+		setStatusProgressing(ext, wrapErrorWithResolutionInfo(resolvedBundleMetadata, err))
+		return ctrl.Result{}, err
+	}
+
 	l.Info("unpacking resolved bundle")
-	unpackResult, err := r.Engine.Unpack(ctx, bundleSource)
+	unpackResult, err := engine.Unpack(ctx, bundleSource)
 	if err != nil {
 		// Wrap the error passed to this with the resolution information until we have successfully
 		// installed since we intend for the progressing condition to replace the resolved condition
@@ -285,7 +320,7 @@ func (r *ClusterExtensionReconciler) reconcile(ctx context.Context, ext *ocv1alp
 	// to ensure exponential backoff can occur:
 	//   - Permission errors (it is not possible to watch changes to permissions.
 	//     The only way to eventually recover from permission errors is to keep retrying).
-	managedObjs, _, err := r.Engine.Apply(ctx, unpackResult.Bundle, ext, objLbls, storeLbls)
+	managedObjs, _, err := engine.Apply(ctx, unpackResult.Bundle, ext, objLbls, storeLbls)
 	if err != nil {
 		setStatusProgressing(ext, wrapErrorWithResolutionInfo(resolvedBundleMetadata, err))
 		// If bundle is not already installed, set Installed status condition to False
