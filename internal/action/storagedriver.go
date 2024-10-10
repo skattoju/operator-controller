@@ -3,7 +3,6 @@ package action
 import (
 	"context"
 	"fmt"
-
 	"helm.sh/helm/v3/pkg/storage/driver"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,6 +17,28 @@ import (
 	helmclient "github.com/operator-framework/helm-operator-plugins/pkg/client"
 	"github.com/operator-framework/helm-operator-plugins/pkg/storage"
 )
+
+// ObjectToRestConfigMapper
+func PureHelmStorageDriverMapper(mapper helmclient.ObjectToRestConfigMapper, reader client.Reader) helmclient.ObjectToStorageDriverMapper {
+	return func(ctx context.Context, object client.Object, config *rest.Config) (driver.Driver, error) {
+		//ext := object.(*ocv1alpha1.ClusterExtension)
+		//namespace := ext.Spec.Install.Namespace
+		cfg, err := mapper(ctx, object, config)
+		extSaClient, err := clientcorev1.NewForConfig(cfg)
+		if err != nil {
+			return nil, err
+		}
+		secretsClient := newSecretsDelegatingClient(extSaClient, reader, "olmv1-system")
+		log := logf.FromContext(ctx).V(2)
+		ownerRefs := []metav1.OwnerReference{*metav1.NewControllerRef(object, object.GetObjectKind().GroupVersionKind())}
+		ownerRefSecretClient := helmclient.NewOwnerRefSecretClient(secretsClient, ownerRefs, nil)
+		s := driver.NewSecrets(ownerRefSecretClient)
+		s.Log = func(s string, i ...interface{}) {
+			log.Info(s, i...)
+		}
+		return s, nil
+	}
+}
 
 func ChunkedStorageDriverMapper(secretsGetter clientcorev1.SecretsGetter, reader client.Reader, namespace string) helmclient.ObjectToStorageDriverMapper {
 	secretsClient := newSecretsDelegatingClient(secretsGetter, reader, namespace)

@@ -278,9 +278,6 @@ func (r *ClusterExtensionReconciler) reconcile(ctx context.Context, ext *ocv1alp
 
 	engine, err := r.Enginator.GetEngine(resolvedBundle)
 	if err != nil {
-		// Wrap the error passed to this with the resolution information until we have successfully
-		// installed since we intend for the progressing condition to replace the resolved condition
-		// and will be removing the .status.resolution field from the ClusterExtension status API
 		setStatusProgressing(ext, wrapErrorWithResolutionInfo(resolvedBundleMetadata, err))
 		return ctrl.Result{}, err
 	}
