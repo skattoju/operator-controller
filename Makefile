@@ -283,7 +283,7 @@ run: docker-build kind-cluster kind-load kind-deploy #HELP Build the operator-co
 
 .PHONY: docker-build
 docker-build: build-linux #EXHELP Build docker image for operator-controller with GOOS=linux and local GOARCH.
-	$(CONTAINER_RUNTIME) build -t $(IMG) -f Dockerfile ./bin/linux
+	$(CONTAINER_RUNTIME) build --load -t $(IMG) -f Dockerfile ./bin/linux
 
 #SECTION Release
 ifeq ($(origin ENABLE_RELEASE_PIPELINE), undefined)

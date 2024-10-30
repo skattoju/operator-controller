@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"gopkg.in/yaml.v2"
 	"helm.sh/helm/v3/pkg/chart/loader"
 	"io"
 	"io/fs"
+	corev1 "k8s.io/api/core/v1"
+	errv1 "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
 	"strings"
 
 	"helm.sh/helm/v3/pkg/action"
@@ -25,6 +29,9 @@ import (
 
 type Helmer struct {
 	ActionClientGetter helmclient.ActionClientGetter
+	ConfigMapName      string
+	Namespace          string
+	Client             client.Client
 }
 
 func loadChartFromFS(fsys fs.FS) (*chart.Chart, error) {
@@ -79,6 +86,28 @@ func (h *Helmer) Apply(ctx context.Context, contentFS fs.FS, ext *ocv1alpha1.Clu
 		return nil, "", err
 	}
 	values := chartutil.Values{}
+
+	// Look for the ConfigMap with the specified name and namespace
+	// here for testing I'm using a pre-configured test configMap in test namespace
+	// TODO: find a way to pass this config map through the ClusterExtension specs
+	var userValuesMap map[string]interface{}
+	configMap := &corev1.ConfigMap{}
+	err = h.Client.Get(ctx, types.NamespacedName{Name: h.ConfigMapName, Namespace: h.Namespace}, configMap)
+	if err != nil && !errv1.IsNotFound(err) {
+		return nil, "", fmt.Errorf("failed to retrieve ConfigMap: %v", err)
+	}
+
+	// If the ConfigMap is found, parse the values.yaml from the data
+	if err == nil {
+		valuesYaml, found := configMap.Data["values.yaml"]
+		if found {
+			userValuesMap, err = parseValuesYaml([]byte(valuesYaml))
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to parse values.yaml from ConfigMap: %v", err)
+			}
+			values = chartutil.CoalesceTables(values, userValuesMap)
+		}
+	}
 
 	ac, err := h.ActionClientGetter.ActionClientFor(ctx, ext)
 	if err != nil {
@@ -165,4 +194,13 @@ func (h *Helmer) getReleaseState(cl helmclient.ActionInterface, ext *ocv1alpha1.
 		relState = StateNeedsUpgrade
 	}
 	return currentRelease, desiredRelease, relState, nil
+}
+
+func parseValuesYaml(yamlContent []byte) (map[string]interface{}, error) {
+	var values map[string]interface{}
+	err := yaml.Unmarshal(yamlContent, &values)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse values.yaml: %v", err)
+	}
+	return values, nil
 }
