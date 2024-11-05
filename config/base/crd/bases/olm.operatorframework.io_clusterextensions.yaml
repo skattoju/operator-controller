@@ -51,6 +51,16 @@ spec:
                      serviceAccount:
                        name: example-sa
                 properties:
+                  configMap:
+                    description: |-
+                      configMap is an optional field that can be used to reference a configMap
+                      containing helm values when installing an extension that is packaged as a helm chart
+                    properties:
+                      name:
+                        type: string
+                    required:
+                    - name
+                    type: object
                   namespace:
                     description: |-
                       namespace is a reference to the Namespace in which the bundle of

@@ -319,6 +319,7 @@ func main() {
 			ActionClientGetter: phg,
 			ConfigMapName:      "",
 			Namespace:          "",
+			Client:             cl,
 		},
 	}
 

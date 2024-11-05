@@ -142,6 +142,12 @@ type ClusterExtensionInstallConfig struct {
 	// resources that are included in the bundle of content being applied.
 	ServiceAccount ServiceAccountReference `json:"serviceAccount"`
 
+	// configMap is an optional field that can be used to reference a configMap
+	// containing helm values when installing an extension that is packaged as a helm chart
+	//
+	//+optional
+	ConfigMap *ConfigMapReference `json:"configMap,omitempty"`
+
 	// preflight is an optional field that can be used to configure the preflight checks run before installation or upgrade of the content for the package specified in the packageName field.
 	//
 	// When specified, it overrides the default configuration of the preflight checks that are required to execute successfully during an install/upgrade operation.
@@ -373,6 +379,11 @@ type ServiceAccountReference struct {
 	//+kubebuilder:validation:MaxLength:=253
 	//+kubebuilder:validation:Pattern:=^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
 	//+kubebuilder:validation:XValidation:rule="self == oldSelf",message="name is immutable"
+	Name string `json:"name"`
+}
+
+// ConfigMapReference references a configMap
+type ConfigMapReference struct {
 	Name string `json:"name"`
 }
 

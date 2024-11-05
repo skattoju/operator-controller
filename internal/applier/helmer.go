@@ -4,14 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v2"
-	"helm.sh/helm/v3/pkg/chart/loader"
 	"io"
 	"io/fs"
+	"log"
+	"strings"
+	"time"
+
+	"helm.sh/helm/v3/pkg/chart/loader"
+	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	errv1 "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
-	"strings"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/chart"
@@ -87,25 +93,58 @@ func (h *Helmer) Apply(ctx context.Context, contentFS fs.FS, ext *ocv1alpha1.Clu
 	}
 	values := chartutil.Values{}
 
+	// Create a client with an SA token
+	// HACK >>>>
+	// Initialize the client to communicate with the cluster
+
+	// Get the default config
+	cfg, err := rest.InClusterConfig()
+	if err != nil {
+		log.Fatalf("failed to get Kubernetes config: %v", err)
+	}
+
+	// Create the Kubernetes client
+	defaultClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		log.Fatalf("failed to create Kubernetes client: %v", err)
+	}
+
+	// Create a token request for the specified service account
+	token, err := getServiceAccountToken(defaultClient, ext.Spec.Install.Namespace, ext.Spec.Install.ServiceAccount.Name)
+	if err != nil {
+		log.Fatalf("failed to get token for service account %s/%s: %v", ext.Spec.Install.Namespace, ext.Spec.Install.ServiceAccount.Name, err)
+	}
+
+	// Now, create a client that uses this token to authenticate
+	authdClientSet, err := createClientWithToken(cfg, token)
+	if err != nil {
+		log.Fatalf("failed to create client with token: %v", err)
+	}
+
 	// Look for the ConfigMap with the specified name and namespace
 	// here for testing I'm using a pre-configured test configMap in test namespace
 	// TODO: find a way to pass this config map through the ClusterExtension specs
-	var userValuesMap map[string]interface{}
 	configMap := &corev1.ConfigMap{}
-	err = h.Client.Get(ctx, types.NamespacedName{Name: h.ConfigMapName, Namespace: h.Namespace}, configMap)
-	if err != nil && !errv1.IsNotFound(err) {
-		return nil, "", fmt.Errorf("failed to retrieve ConfigMap: %v", err)
+	if ext.Spec.Install.ConfigMap != nil {
+		configMap, err = authdClientSet.CoreV1().ConfigMaps(ext.Spec.Install.Namespace).Get(ctx, ext.Spec.Install.ConfigMap.Name, metav1.GetOptions{})
+		if err != nil && !errv1.IsNotFound(err) {
+			return nil, "", fmt.Errorf("failed to retrieve ConfigMap: %v", err)
+		}
 	}
 
 	// If the ConfigMap is found, parse the values.yaml from the data
 	if err == nil {
+		var userValuesMap map[string]interface{}
 		valuesYaml, found := configMap.Data["values.yaml"]
 		if found {
-			userValuesMap, err = parseValuesYaml([]byte(valuesYaml))
+			userValuesMap, err = chartutil.ReadValues([]byte(valuesYaml))
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to parse values.yaml from ConfigMap: %v", err)
 			}
-			values = chartutil.CoalesceTables(values, userValuesMap)
+			values, err = chartutil.CoalesceValues(chrt, userValuesMap)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to coalesce values from ConfigMap: %v", err)
+			}
 		}
 	}
 
@@ -117,6 +156,10 @@ func (h *Helmer) Apply(ctx context.Context, contentFS fs.FS, ext *ocv1alpha1.Clu
 	post := &postrenderer{
 		labels: objectLabels,
 	}
+
+	// DEBUG
+	// stringValues, err := values.YAML()
+	// log.Printf("attempting install with:\n%v\n%v\n", stringValues, err)
 
 	rel, _, state, err := h.getReleaseState(ac, ext, chrt, values, post)
 	if err != nil {
@@ -196,11 +239,47 @@ func (h *Helmer) getReleaseState(cl helmclient.ActionInterface, ext *ocv1alpha1.
 	return currentRelease, desiredRelease, relState, nil
 }
 
-func parseValuesYaml(yamlContent []byte) (map[string]interface{}, error) {
-	var values map[string]interface{}
-	err := yaml.Unmarshal(yamlContent, &values)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse values.yaml: %v", err)
+//func parseValuesYaml(yamlContent []byte) (map[string]interface{}, error) {
+//	var values map[string]interface{}
+//	err := yaml.Unmarshal(yamlContent, &values)
+//	if err != nil {
+//		return nil, fmt.Errorf("failed to parse values.yaml: %v", err)
+//	}
+//	return values, nil
+//}
+
+// getServiceAccountToken requests a token for the given service account.
+func getServiceAccountToken(clientSet *kubernetes.Clientset, namespace, serviceAccountName string) (string, error) {
+	tokenRequest := &authv1.TokenRequest{
+		Spec: authv1.TokenRequestSpec{
+			ExpirationSeconds: ptr.To[int64](int64(10 * time.Minute / time.Second)),
+		},
 	}
-	return values, nil
+
+	// Make the TokenRequest API call
+	token, err := clientSet.CoreV1().ServiceAccounts(namespace).CreateToken(context.TODO(), serviceAccountName, tokenRequest, metav1.CreateOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to create token for service account: %w", err)
+	}
+
+	// Return the token
+	return token.Status.Token, nil
+}
+
+// createClientWithToken creates a new client that uses the specified token.
+func createClientWithToken(cfg *rest.Config, token string) (*kubernetes.Clientset, error) {
+
+	// Remove existing credentials
+	anonCfg := rest.AnonymousClientConfig(cfg)
+
+	// Create a custom rest config using the token
+	cfgCopy := rest.CopyConfig(anonCfg)
+	cfgCopy.BearerToken = token
+
+	clientSet, err := kubernetes.NewForConfig(cfgCopy)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes client with token: %w", err)
+	}
+
+	return clientSet, nil
 }
