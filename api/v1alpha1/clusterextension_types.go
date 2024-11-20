@@ -142,11 +142,11 @@ type ClusterExtensionInstallConfig struct {
 	// resources that are included in the bundle of content being applied.
 	ServiceAccount ServiceAccountReference `json:"serviceAccount"`
 
-	// configMap is an optional field that can be used to reference a configMap
+	// configSource is an optional field that can be used to reference a configMap
 	// containing helm values when installing an extension that is packaged as a helm chart
 	//
 	//+optional
-	ConfigMap *ConfigMapReference `json:"configMap,omitempty"`
+	ConfigSources *ConfigSourceReferences `json:"configMap,omitempty"`
 
 	// preflight is an optional field that can be used to configure the preflight checks run before installation or upgrade of the content for the package specified in the packageName field.
 	//
@@ -382,9 +382,11 @@ type ServiceAccountReference struct {
 	Name string `json:"name"`
 }
 
-// ConfigMapReference references a configMap
-type ConfigMapReference struct {
-	Name string `json:"name"`
+// ConfigSourceReference can references a configMap, a secret, plain text config
+type ConfigSourceReferences struct {
+	ConfigMapNames []string `json:"configMapNames,omitempty"`
+	SecretNames    []string `json:"secretNames,omitempty"`
+	TextConfigs    []string `json:"textConfigs,omitempty"`
 }
 
 // PreflightConfig holds the configuration for the preflight checks.  If used, at least one preflight check must be non-nil.

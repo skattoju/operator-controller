@@ -37,5 +37,6 @@ spec:
     namespace: metrics-server
     serviceAccount:
       name: metrics-server-installer
-    configMap:
-      name: values
+    configSources:
+      configMaps:
+      - "values"

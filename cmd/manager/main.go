@@ -317,9 +317,7 @@ func main() {
 		},
 		Applier: &applier.Helmer{
 			ActionClientGetter: phg,
-			ConfigMapName:      "",
-			Namespace:          "",
-			Client:             cl,
+			TokenGetter:        tokenGetter,
 		},
 	}
 

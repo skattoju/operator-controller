@@ -53,13 +53,21 @@ spec:
                 properties:
                   configMap:
                     description: |-
-                      configMap is an optional field that can be used to reference a configMap
+                      configSource is an optional field that can be used to reference a configMap
                       containing helm values when installing an extension that is packaged as a helm chart
                     properties:
-                      name:
-                        type: string
-                    required:
-                    - name
+                      configMapNames:
+                        items:
+                          type: string
+                        type: array
+                      secretNames:
+                        items:
+                          type: string
+                        type: array
+                      textConfigs:
+                        items:
+                          type: string
+                        type: array
                     type: object
                   namespace:
                     description: |-
